@@ -1,33 +1,40 @@
-from collections.abc import Callable
-from typing import Optional, TypedDict
+from typing import Callable, Optional, TypedDict
 
 from featureflags.flags import FlagConfig
-from featureflags.storage import Storage
 
 
 class FeatureFlags:
-    def __init__(self, storage: Storage, initial_flags: dict[str, FlagConfig]) -> None:
-        self.storage = storage
-        self._init_flags(initial_flags)
+    def __init__(self, *flags: dict[str, FlagConfig]) -> None:
+        self._flags: dict[str, FlagConfig] = {}
+        for d in flags:
+            self._flags.update(d)
 
-    def _init_flags(self, flags: dict[str, FlagConfig]) -> None:
-        for name, config in flags.items():
-            self.define(name, config)
-
-    def define(
-        self,
-        name: str,
-        config: FlagConfig,
-    ) -> None:
-        self.storage.set_flag(name, config)
+    def define(self, name: str, config: FlagConfig) -> None:
+        self._flags[name] = config
 
     def enable(self, name: str) -> None:
-        self.storage.enable_flag(name)
+        if name in self._flags:
+            self._flags[name]["enabled"] = True
 
     def disable(self, name: str) -> None:
-        self.storage.disable_flag(name)
+        if name in self._flags:
+            self._flags[name]["enabled"] = False
 
-    def is_enabled(self, name: str) -> bool:
-        flag = self.storage.get_flag(name)
+    def is_enabled(self, name: str, context: Optional[dict] = None) -> bool:
+        flag = self._flags.get(name)
+        if not flag:
+            return False
 
-        return False if flag.is_none() else flag.unwrap()['enabled']
+        if not flag.get("enabled", False):
+            return False
+
+        condition = flag.get("condition")
+        if condition and not condition(context or {}):
+            return False
+
+        rollout = flag.get("rollout", 100)
+        if rollout < 100 and context and "user_id" in context:
+            uid = str(context["user_id"])
+            return hash(uid) % 100 < rollout
+
+        return True
